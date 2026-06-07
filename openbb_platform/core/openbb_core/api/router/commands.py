@@ -26,7 +26,6 @@ from openbb_core.app.service.user_service import UserService
 from openbb_core.app.utils_optional import is_installed
 from openbb_core.env import Env
 from openbb_core.provider.utils.helpers import to_snake_case
-from starlette.routing import Mount
 
 CHARTING_INSTALLED = is_installed("openbb_charting")
 Charting = None
@@ -356,18 +355,7 @@ def add_command_map(command_runner: CommandRunner, api_router: APIRouter) -> Non
     plugins_router = RouterLoader.from_extensions()
 
     for route in plugins_router.api_router.routes:
-        if isinstance(route, APIRoute):
-            route.endpoint = build_api_wrapper(command_runner=command_runner, route=route)  # type: ignore # noqa
-            continue
-        # Mounted sub-apps (e.g. WSGIMiddleware for Flask) are Starlette Mount routes.
-        # APIRouter.include_router will not carry these over, so we mount them manually.
-        if isinstance(route, Mount):
-            if any(
-                isinstance(existing, Mount) and existing.path == route.path
-                for existing in api_router.routes
-            ):
-                continue
-            api_router.mount(route.path, route.app, name=route.name)
+        route.endpoint = build_api_wrapper(command_runner=command_runner, route=route)  # type: ignore # noqa
     api_router.include_router(router=plugins_router.api_router)
 
 

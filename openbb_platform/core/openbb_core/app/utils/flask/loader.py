@@ -1,69 +1,62 @@
-"""Flask extension loading integration."""
+"""Mount Flask core extensions onto the FastAPI app with an OpenAPI overlay."""
 
-from typing import Any, Optional
-from .introspection import _check_flask_available, FlaskIntrospector
-from .adapter import OpenAPISpecGenerator
-from .registry import FlaskMountRegistry
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
+
+logger = logging.getLogger("openbb_core.app.utils.flask")
 
 
-class FlaskExtensionLoader:
-    """Integrates Flask app loading with OpenBB's extension system."""
-    
-    @staticmethod
-    def detect_flask_entry_point(entry_point: str) -> bool:
-        """Detect if an entry point references a Flask application."""
-        try:
-            module_path, app_name = entry_point.split(':')
-            module = __import__(module_path, fromlist=[app_name])
-            app = getattr(module, app_name)
-            return FlaskExtensionLoader.validate_flask_app(app)
-        except Exception:
-            return False
-    
-    @staticmethod
-    def load_flask_extension(entry_point: str, prefix: str = "/") -> Optional[Any]:
-        """Load Flask app as OpenBB extension with OpenAPI metadata."""
-        try:
-            if not _check_flask_available():
-                return None
-                
-            module_path, app_name = entry_point.split(':')
-            module = __import__(module_path, fromlist=[app_name])
-            flask_app = getattr(module, app_name)
-            
-            if FlaskExtensionLoader.validate_flask_app(flask_app):
-                from openbb_core.app.router import Router
-                from fastapi.middleware.wsgi import WSGIMiddleware
+def mount_flask_extensions(app: FastAPI, prefix: str = "") -> None:
+    """Mount every Flask core extension onto ``app`` under ``prefix``."""
+    from openbb_core.app.extension_loader import ExtensionLoader
 
-                router = Router()
-                router.api_router.mount("/", WSGIMiddleware(flask_app))
-                
-                # Generate OpenAPI spec and register in centralized registry
-                introspector = FlaskIntrospector(flask_app)
-                routes = introspector.analyze_routes()
-                openapi_spec = OpenAPISpecGenerator.generate_spec(routes)
-                
-                FlaskMountRegistry.register_mount(
-                    prefix=prefix,
-                    flask_app=flask_app,
-                    openapi_spec=openapi_spec,
-                    router=router
-                )
-                
-                return router
-            return None
-        except Exception as e:
-            print(f"Error loading Flask extension {entry_point}: {e}")
-            return None
-    
-    @staticmethod
-    def validate_flask_app(app: Any) -> bool:
-        """Validate that the loaded object is a proper Flask application."""
-        try:
-            return (
-                hasattr(app, 'url_map') and
-                hasattr(app, 'view_functions') and
-                hasattr(app, 'name')
-            )
-        except Exception:
-            return False
+    flask_apps = ExtensionLoader().flask_objects
+    if not flask_apps:
+        return
+
+    from fastapi.middleware.wsgi import WSGIMiddleware
+
+    base = prefix.rstrip("/")
+    for name, flask_app in flask_apps.items():
+        app.mount(f"{base}/{name}", WSGIMiddleware(flask_app), name=name)
+        _register_openapi(flask_app, name)
+
+
+def merge_flask_openapi(schema: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+    """Merge the registered Flask OpenAPI fragments into ``schema`` in place."""
+    from .registry import FlaskMountRegistry
+
+    merged = FlaskMountRegistry.aggregate(prefix)
+    if merged["paths"]:
+        schema.setdefault("paths", {}).update(merged["paths"])
+        components = schema.setdefault("components", {})
+        for section, entries in merged["components"].items():
+            components.setdefault(section, {}).update(entries)
+    return schema
+
+
+def _register_openapi(flask_app: Any, name: str) -> None:
+    """Introspect ``flask_app`` and register its OpenAPI fragment."""
+    from .introspector import FlaskIntrospector
+    from .openapi import OpenAPISpecGenerator
+    from .registry import FlaskMountRegistry
+
+    paths: dict[str, Any] = {}
+    components: dict[str, Any] = {}
+    try:
+        introspector = FlaskIntrospector(flask_app, name)
+        spec = introspector.try_self_spec()
+        if spec is None:
+            routes, models = introspector.introspect()
+            spec = OpenAPISpecGenerator(routes, models).generate()
+        paths = spec.get("paths", {})
+        components = spec.get("components", {})
+    except Exception as exc:
+        logger.warning("Flask introspection failed for '%s': %s", name, exc)
+
+    FlaskMountRegistry.register(name, paths, components)

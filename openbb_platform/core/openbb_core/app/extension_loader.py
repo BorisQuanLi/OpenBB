@@ -51,6 +51,7 @@ class ExtensionLoader(metaclass=SingletonMeta):
         self._obbject_objects: dict[str, Extension] = {}
         self._core_objects: dict[str, Router] = {}
         self._provider_objects: dict[str, Provider] = {}
+        self._flask_objects: dict[str, Any] = {}
         self._on_command_output_callbacks: dict[str, list[Extension]] = {}
         self._register_command_output_callbacks()
 
@@ -139,6 +140,21 @@ class ExtensionLoader(metaclass=SingletonMeta):
         )
         return self._provider_objects
 
+    @property
+    def flask_objects(self) -> dict[str, Any]:
+        """Return Flask applications referenced by core extension entry points."""
+        if not self._flask_objects:
+            from openbb_core.app.utils.flask import is_flask_app
+
+            for ep in self._core_entry_points:
+                try:
+                    entry = ep.load()
+                except (ImportError, AttributeError):
+                    continue
+                if is_flask_app(entry):
+                    self._flask_objects[ep.name] = entry
+        return self._flask_objects
+
     @staticmethod
     def _sorted_entry_points(group: str) -> EntryPoints:
         """Return a sorted dictionary of entry points."""
@@ -175,23 +191,6 @@ class ExtensionLoader(metaclass=SingletonMeta):
                     entry = entry.router
                 if isinstance(entry, APIRouter):
                     entries[ep.name] = Router.from_fastapi(entry)
-                    continue
-                if "flask" in str(type(entry)).lower():
-                    try:
-                        import flask  # noqa: F401
-                    except ImportError:
-                        continue
-                    from openbb_core.app.utils.flask import FlaskExtensionLoader
-
-                    try:
-                        flask_extension = FlaskExtensionLoader.load_flask_extension(
-                            ep.value, ep.name
-                        )
-                        if flask_extension:
-                            entries[ep.name] = flask_extension
-                    except (ModuleNotFoundError, ImportError):
-                        continue
-
             return entries
 
         def load_provider(eps: EntryPoints) -> dict[str, "Provider"]:

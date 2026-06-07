@@ -1,39 +1,35 @@
-"""Flask integration utilities for OpenBB Core.
+"""Flask integration utilities for OpenBB Core."""
 
-This module provides Flask app integration capabilities.
-All imports are lazy to avoid ImportError when Flask is not installed.
-"""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .detection import flask_available, is_flask_app
+    from .loader import merge_flask_openapi, mount_flask_extensions
+    from .registry import FlaskMountRegistry
+
+__all__ = [
+    "FlaskMountRegistry",
+    "flask_available",
+    "is_flask_app",
+    "merge_flask_openapi",
+    "mount_flask_extensions",
+]
 
 
 def __getattr__(name: str):
-    """Lazy import to avoid ImportError when Flask is not installed."""
-    if name == "FlaskExtensionLoader":
-        from .loader import FlaskExtensionLoader
+    """Resolve public attributes lazily."""
+    if name in {"mount_flask_extensions", "merge_flask_openapi"}:
+        from . import loader
 
-        return FlaskExtensionLoader
-    if name == "FlaskIntrospector":
-        from .introspection import FlaskIntrospector
-
-        return FlaskIntrospector
-    if name == "OpenAPISpecGenerator":
-        from .adapter import OpenAPISpecGenerator
-
-        return OpenAPISpecGenerator
+        return getattr(loader, name)
     if name == "FlaskMountRegistry":
         from .registry import FlaskMountRegistry
 
         return FlaskMountRegistry
-    if name == "_check_flask_available":
-        from .introspection import _check_flask_available
+    if name in {"is_flask_app", "flask_available"}:
+        from . import detection
 
-        return _check_flask_available
+        return getattr(detection, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-__all__ = [
-    "FlaskIntrospector",
-    "FlaskExtensionLoader",
-    "OpenAPISpecGenerator",
-    "FlaskMountRegistry",
-    "_check_flask_available",
-]

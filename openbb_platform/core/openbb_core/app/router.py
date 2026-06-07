@@ -15,9 +15,7 @@ from typing import (
 )
 
 from fastapi import APIRouter, Depends
-from fastapi.routing import APIRoute
 from pydantic import BaseModel
-from starlette.routing import Mount
 from typing_extensions import ParamSpec
 
 from openbb_core.app.deprecation import DeprecationSummary, OpenBBDeprecationWarning
@@ -188,29 +186,6 @@ class Router:
             prefix=prefix,
             tags=tags,  # type: ignore
         )
-
-        # FastAPI's APIRouter.include_router only includes APIRoute instances.
-        # Starlette Mount routes (used by .mount, e.g. for WSGIMiddleware) must
-        # be manually propagated, otherwise mounted apps silently disappear.
-        def _join_paths(p1: str, p2: str) -> str:
-            if not p1:
-                return p2 or "/"
-            if not p2:
-                return p1 or "/"
-            joined = p1.rstrip("/") + "/" + p2.lstrip("/")
-            return joined.rstrip("/") or "/"
-
-        for route in router.api_router.routes:
-            if not isinstance(route, Mount):
-                continue
-            mount_path = _join_paths(prefix, route.path)
-            if any(
-                isinstance(existing, Mount) and existing.path == mount_path
-                for existing in self._api_router.routes
-            ):
-                continue
-            self._api_router.mount(mount_path, route.app, name=route.name)
-
         name = prefix if prefix else router.prefix
         self._routers[name.strip("/")] = router
 
@@ -455,11 +430,7 @@ class CommandMap:
     ) -> dict[str, Callable]:
         """Get command map."""
         api_router = router.api_router
-        command_map = {
-            route.path: route.endpoint
-            for route in api_router.routes
-            if isinstance(route, APIRoute)
-        }
+        command_map = {route.path: route.endpoint for route in api_router.routes}  # type: ignore
         return command_map
 
     @staticmethod
@@ -473,8 +444,6 @@ class CommandMap:
 
         coverage_map: dict[Any, Any] = {}
         for route in api_router.routes:
-            if not isinstance(route, APIRoute):
-                continue
             openapi_extra = getattr(route, "openapi_extra", None)
             if openapi_extra:
                 model = openapi_extra.get("model", None)
@@ -506,9 +475,7 @@ class CommandMap:
 
         coverage_map: dict[Any, Any] = {}
         for route in api_router.routes:
-            if not isinstance(route, APIRoute):
-                continue
-            openapi_extra = getattr(route, "openapi_extra", None)
+            openapi_extra = getattr(route, "openapi_extra")
             if openapi_extra:
                 model = openapi_extra.get("model", None)
                 if model and model in mapping:
@@ -530,9 +497,7 @@ class CommandMap:
 
         coverage_map: dict[Any, Any] = {}
         for route in api_router.routes:
-            if not isinstance(route, APIRoute):
-                continue
-            openapi_extra = getattr(route, "openapi_extra", None)
+            openapi_extra = getattr(route, "openapi_extra")
             if openapi_extra:
                 model = openapi_extra.get("model", None)
                 if model and hasattr(route, "path"):
